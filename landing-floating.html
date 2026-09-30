@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Screen3D — Panel flotante 3D</title>
+<style>
+    :root {
+        --neon-cyan: #00ffe5;
+        --neon-pink: #ff2fd6;
+        --neon-purple: #8b5cf6;
+        --neon-blue: #2fa8ff;
+        --bg: #05040a;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+        margin: 0; padding: 0; width: 100%; height: 100%;
+        overflow: hidden; background: var(--bg); color: #eef2ff;
+        font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    }
+
+    /* WebGL background world (room / grid / starfield) */
+    #three-canvas { position: fixed; inset: 0; display: block; z-index: 0; }
+
+    /* CSS3D layer: floating content boxes, each anchored at its own depth in the 3D world */
+    #css3d-container { position: fixed; inset: 0; z-index: 1; pointer-events: none; overflow: hidden; }
+    #css3d-container .css3d-object * { pointer-events: auto; }
+
+    /* Fixed chrome UI (outside the 3D world, does not float in depth) */
+    #hud {
+        position: fixed; top: 15px; left: 15px; z-index: 10;
+        color: var(--neon-cyan); background: rgba(5, 5, 15, 0.8);
+        padding: 10px 14px; border-radius: 8px; border: 1px solid var(--neon-cyan);
+        font-size: 11px; line-height: 1.5; box-shadow: 0 0 15px rgba(0, 255, 220, 0.2);
+        max-width: 220px;
+    }
+    #webcam {
+        position: fixed; top: 15px; right: 15px; z-index: 10;
+        width: 130px; height: 98px; transform: scaleX(-1);
+        border: 2px solid var(--neon-cyan); border-radius: 6px; opacity: 0.85;
+    }
+    #cam-permission {
+        position: fixed; bottom: 18px; right: 18px; z-index: 10;
+        background: rgba(5,5,15,0.85); border: 1px solid var(--neon-pink); color: var(--neon-pink);
+        padding: 10px 14px; border-radius: 8px; font-size: 12px; cursor: pointer;
+        box-shadow: 0 0 12px rgba(255,47,214,0.3); display: none;
+    }
+    #brand {
+        position: fixed; bottom: 15px; left: 15px; z-index: 10;
+        font-weight: 800; letter-spacing: 2px; font-size: 14px; color: #fff;
+        text-shadow: 0 0 10px var(--neon-cyan), 0 0 20px var(--neon-cyan);
+    }
+
+    /* ---- Floating box styling (rendered inside 3D space via CSS3DObject) ---- */
+    .box {
+        background: rgba(10, 9, 20, 0.62);
+        border: 1px solid rgba(0, 255, 229, 0.3);
+        border-radius: 18px;
+        backdrop-filter: blur(4px);
+        box-shadow: 0 0 30px rgba(0, 255, 229, 0.12);
+    }
+
+    .box-hero { width: 780px; padding: 46px 54px; text-align: center; border-color: rgba(0,255,229,0.45); }
+    .badge {
+        display: inline-block; padding: 7px 20px; border-radius: 24px;
+        border: 1px solid var(--neon-cyan); color: var(--neon-cyan);
+        font-size: 13px; letter-spacing: 3px; text-transform: uppercase;
+        margin-bottom: 22px; box-shadow: 0 0 14px rgba(0,255,229,0.35);
+    }
+    .glow-title {
+        font-size: 58px; font-weight: 900; margin: 0 0 16px; line-height: 1.08;
+        background: linear-gradient(90deg, var(--neon-cyan), var(--neon-pink) 50%, var(--neon-purple));
+        -webkit-background-clip: text; background-clip: text; color: transparent;
+        text-shadow: 0 0 50px rgba(0, 255, 229, 0.4);
+    }
+    .subtitle { font-size: 18px; color: #c9d3f5; line-height: 1.55; margin: 0 0 26px; }
+    .btn {
+        text-decoration: none; padding: 15px 32px; border-radius: 10px; font-weight: 700;
+        font-size: 16px; display: inline-block; transition: transform 0.2s;
+        color: #05040a; background: linear-gradient(90deg, var(--neon-cyan), var(--neon-blue));
+        box-shadow: 0 0 26px rgba(0,255,229,0.55);
+    }
+    .btn:hover { transform: translateY(-3px); }
+
+    .box-feature { width: 320px; padding: 26px 26px; }
+    .box-feature .icon { font-size: 30px; margin-bottom: 10px; filter: drop-shadow(0 0 8px currentColor); }
+    .box-feature h3 { margin: 0 0 8px; font-size: 18px; color: #fff; }
+    .box-feature p { margin: 0; color: #a9b2d6; font-size: 14px; line-height: 1.5; }
+
+    .box-steps { width: 620px; padding: 24px 30px; border-color: rgba(139,92,246,0.4); }
+    .box-steps h4 { margin: 0 0 14px; color: #fff; font-size: 17px; text-align: center; text-shadow: 0 0 14px rgba(139,92,246,0.5); }
+    .box-steps ol { margin: 0; padding-left: 20px; color: #a9b2d6; font-size: 13px; line-height: 1.8; }
+    .box-steps ol li strong { color: #fff; }
+
+    .box-cta {
+        width: 300px; padding: 20px 26px; text-align: center; border-color: rgba(255,47,214,0.5);
+        box-shadow: 0 0 30px rgba(255,47,214,0.2);
+    }
+    .box-cta p { margin: 0 0 14px; font-size: 14px; color: #f0c9ea; }
+    .btn-pink {
+        text-decoration: none; padding: 12px 22px; border-radius: 8px; font-weight: 700; font-size: 14px;
+        color: var(--neon-pink); border: 1px solid var(--neon-pink); background: rgba(255,47,214,0.08);
+        box-shadow: 0 0 18px rgba(255,47,214,0.3); display: inline-block;
+    }
+</style>
+
+<script type="importmap">
+{ "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+</head>
+<body>
+
+    <div id="brand">⌬ SCREEN3D</div>
+    <div id="hud">
+        <strong>VENTANA 3D</strong><br>
+        Mueve la cabeza: las cajas más cercanas se desplazan más que las lejanas.
+    </div>
+    <video id="webcam" autoplay playsinline muted></video>
+    <div id="cam-permission" onclick="requestCamera()">⚠ Activar cámara para el efecto de profundidad facial</div>
+
+    <canvas id="three-canvas"></canvas>
+    <div id="css3d-container"></div>
+
+    <!-- Cada template es una caja flotante anclada a una posición y profundidad fija en el mundo 3D -->
+    <template id="tpl-hero">
+        <div class="box box-hero">
+            <div class="badge">Realidad aumentada · Sin gafas · Sin sensores</div>
+            <h1 class="glow-title">Tu pantalla es<br>una ventana al espacio</h1>
+            <p class="subtitle">Mueve la cabeza frente a la webcam: cada caja flota a su propia profundidad y reacciona con su propio paralaje.</p>
+            <a class="btn" href="index.html">▶ Probar la demo 6-DOF</a>
+        </div>
+    </template>
+
+    <template id="tpl-f1">
+        <div class="box box-feature"><div class="icon" style="color: var(--neon-cyan);">👁</div><h3>Face tracking 6-DOF</h3><p>Detecta posición y rotación de tu cabeza (X, Y, Z, yaw, pitch, roll) con MediaPipe Face Mesh.</p></div>
+    </template>
+    <template id="tpl-f2">
+        <div class="box box-feature"><div class="icon" style="color: var(--neon-pink);">🪟</div><h3>Efecto ventana</h3><p>La cámara virtual se mueve como tus ojos, generando paralaje creíble sobre la escena.</p></div>
+    </template>
+    <template id="tpl-f3">
+        <div class="box box-feature"><div class="icon" style="color: var(--neon-purple);">✨</div><h3>Suavizado inteligente</h3><p>Interpolación (lerp) que elimina temblores y ruido para un movimiento fluido.</p></div>
+    </template>
+    <template id="tpl-f4">
+        <div class="box box-feature"><div class="icon" style="color: var(--neon-blue);">🖥️</div><h3>100% navegador</h3><p>Sin instalar nada: WebGL + WebRTC funcionando directamente en tu navegador.</p></div>
+    </template>
+
+    <template id="tpl-steps">
+        <div class="box box-steps">
+            <h4>CÓMO FUNCIONA</h4>
+            <ol>
+                <li><strong>Captura facial:</strong> MediaPipe localiza los puntos de referencia de tu rostro.</li>
+                <li><strong>Cálculo de pose:</strong> nariz, ojos, frente y mentón estiman posición y rotación.</li>
+                <li><strong>Render con paralaje:</strong> Three.js mueve la cámara virtual dentro de esta escena.</li>
+            </ol>
+        </div>
+    </template>
+
+    <template id="tpl-cta">
+        <div class="box box-cta">
+            <p>Listo para ver profundidad donde no la hay.</p>
+            <a class="btn-pink" href="index.html">▶ Lanzar experiencia 3D</a>
+        </div>
+    </template>
+
+<script type="module">
+    import * as THREE from 'three';
+    import { CSS3DRenderer, CSS3DObject } from 'three/addons/renderers/CSS3DRenderer.js';
+
+    const videoElement = document.getElementById('webcam');
+    const canvas3D = document.getElementById('three-canvas');
+
+    // Objetivos de la IA (Target) — misma lógica de tracking que la demo principal
+    let targetX = 0, targetY = 0, targetZ = 3;
+    let targetYaw = 0, targetPitch = 0, targetRoll = 0;
+
+    // Valores interpolados actuales (Current)
+    let currentX = 0, currentY = 0, currentZ = 3;
+    let currentYaw = 0, currentPitch = 0, currentRoll = 0;
+
+    const SUAVIZADO = 0.10;
+
+    // Cajas flotantes: cada una fija en su propia posición (x, y, z) del mundo, sin scroll
+    const BOXES = [
+        { tpl: 'tpl-hero',  x: 0,    y: 1.1,  z: -3.2 },
+        { tpl: 'tpl-f1',    x: -5.4, y: 1.8,  z: -5.5 },
+        { tpl: 'tpl-f2',    x: 5.4,  y: 1.8,  z: -5.5 },
+        { tpl: 'tpl-f3',    x: -5.6, y: -1.6, z: -6.5 },
+        { tpl: 'tpl-f4',    x: 5.6,  y: -1.6, z: -6.5 },
+        { tpl: 'tpl-steps', x: 0,    y: -3.4, z: -8.5 },
+        { tpl: 'tpl-cta',   x: 0,    y: 3.1,  z: -2.2 }
+    ];
+    const CONTENT_SCALE = 0.012;
+
+    let scene, camera, renderer, css3dScene, css3dRenderer;
+
+    function init3D() {
+        scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x05040a, 0.028);
+
+        camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 200);
+        camera.position.set(0, 0, 3);
+
+        renderer = new THREE.WebGLRenderer({ canvas: canvas3D, antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+        css3dScene = new THREE.Scene();
+        css3dRenderer = new CSS3DRenderer();
+        css3dRenderer.setSize(window.innerWidth, window.innerHeight);
+        css3dRenderer.domElement.style.position = 'absolute';
+        css3dRenderer.domElement.style.top = '0';
+        css3dRenderer.domElement.style.pointerEvents = 'none';
+        document.getElementById('css3d-container').appendChild(css3dRenderer.domElement);
+
+        buildNeonRoom();
+        buildStarfield();
+        buildFloatingBoxes();
+
+        window.addEventListener('resize', onWindowResize, false);
+        window.addEventListener('mousemove', onMouseMove);
+    }
+
+    // Habitación neón de fondo (paredes + rejilla) que enmarca las cajas flotantes
+    function buildNeonRoom() {
+        const roomGeo = new THREE.BoxGeometry(20, 14, 20);
+        const roomMat = new THREE.MeshBasicMaterial({ color: 0x0a0c16, side: THREE.BackSide });
+        scene.add(new THREE.Mesh(roomGeo, roomMat));
+
+        const edges = new THREE.EdgesGeometry(roomGeo);
+        const lineMat = new THREE.LineBasicMaterial({ color: 0x00ffcc, transparent: true, opacity: 0.15 });
+        scene.add(new THREE.LineSegments(edges, lineMat));
+
+        const grid = new THREE.GridHelper(20, 20, 0x00ffe5, 0x00ffe5);
+        grid.material.transparent = true;
+        grid.material.opacity = 0.15;
+        grid.position.y = -6.9;
+        scene.add(grid);
+
+        // Anillos neón decorativos flotando entre las cajas
+        const colors = [0x00ffe5, 0xff2fd6, 0x8b5cf6, 0x2fa8ff];
+        const ringPositions = [
+            { x: -7, y: 0, z: -7 }, { x: 7, y: -0.5, z: -8 },
+            { x: 0, y: 5, z: -9 }, { x: -3, y: -5.5, z: -5 }
+        ];
+        ringPositions.forEach((p, i) => {
+            const geo = new THREE.RingGeometry(1.0, 1.08, 40);
+            const mat = new THREE.MeshBasicMaterial({ color: colors[i % colors.length], transparent: true, opacity: 0.5, side: THREE.DoubleSide });
+            const ring = new THREE.Mesh(geo, mat);
+            ring.position.set(p.x, p.y, p.z);
+            scene.add(ring);
+        });
+    }
+
+    function buildStarfield() {
+        const count = 600;
+        const positions = new Float32Array(count * 3);
+        for (let i = 0; i < count; i++) {
+            positions[i * 3] = (Math.random() - 0.5) * 18;
+            positions[i * 3 + 1] = (Math.random() - 0.5) * 13;
+            positions[i * 3 + 2] = -Math.random() * 18 - 2;
+        }
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        const mat = new THREE.PointsMaterial({ color: 0xffffff, size: 0.09, transparent: true, opacity: 0.6 });
+        scene.add(new THREE.Points(geo, mat));
+    }
+
+    // Instancia cada caja de contenido HTML como objeto real dentro del mundo 3D
+    function buildFloatingBoxes() {
+        BOXES.forEach(box => {
+            const tpl = document.getElementById(box.tpl);
+            const el = tpl.content.firstElementChild.cloneNode(true);
+            el.classList.add('css3d-object');
+            const obj = new CSS3DObject(el);
+            obj.position.set(box.x, box.y, box.z);
+            obj.scale.set(CONTENT_SCALE, CONTENT_SCALE, CONTENT_SCALE);
+            css3dScene.add(obj);
+        });
+    }
+
+    function onWindowResize() {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        css3dRenderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    // Fallback sin webcam: el ratón simula el movimiento de cabeza
+    let usingFaceTracking = false;
+    function onMouseMove(e) {
+        if (usingFaceTracking) return;
+        targetX = -((e.clientX / window.innerWidth) - 0.5) * 3.5;
+        targetY = -((e.clientY / window.innerHeight) - 0.5) * 2.5;
+        targetYaw = -((e.clientX / window.innerWidth) - 0.5) * 0.25;
+        targetPitch = ((e.clientY / window.innerHeight) - 0.5) * 0.2;
+    }
+
+    // CÁLCULO TRIGONOMÉTRICO CON MEDIAPIPE FACE MESH (idéntico al de la demo principal)
+    function onResults(results) {
+        if (!results.multiFaceLandmarks || results.multiFaceLandmarks.length === 0) return;
+        usingFaceTracking = true;
+        document.getElementById('cam-permission').style.display = 'none';
+
+        const landmarks = results.multiFaceLandmarks[0];
+        const nariz = landmarks[4];
+        const menton = landmarks[152];
+        const frente = landmarks[10];
+        const ojoIzq = landmarks[33];
+        const ojoDer = landmarks[263];
+
+        targetX = -((nariz.x - 0.5) * 4.5);
+        targetY = -((nariz.y - 0.5) * 3.5);
+
+        const anchoOjos = Math.hypot(ojoDer.x - ojoIzq.x, ojoDer.y - ojoIzq.y);
+        targetZ = 1.5 + (1.0 / (anchoOjos * 3.5));
+
+        const distIzq = Math.hypot(nariz.x - ojoIzq.x, nariz.y - ojoIzq.y);
+        const distDer = Math.hypot(nariz.x - ojoDer.x, nariz.y - ojoDer.y);
+        targetYaw = (distIzq - distDer) * 2.8;
+
+        const distFrente = Math.hypot(nariz.x - frente.x, nariz.y - frente.y);
+        const distMenton = Math.hypot(nariz.x - menton.x, nariz.y - menton.y);
+        targetPitch = (distMenton - distFrente) * 2.5;
+
+        targetRoll = Math.atan2(ojoDer.y - ojoIzq.y, ojoDer.x - ojoIzq.x);
+    }
+
+    function animate() {
+        requestAnimationFrame(animate);
+
+        currentX += (targetX - currentX) * SUAVIZADO;
+        currentY += (targetY - currentY) * SUAVIZADO;
+        currentZ += (targetZ - currentZ) * SUAVIZADO;
+        currentYaw += (targetYaw - currentYaw) * SUAVIZADO;
+        currentPitch += (targetPitch - currentPitch) * SUAVIZADO;
+        currentRoll += (targetRoll - currentRoll) * SUAVIZADO;
+
+        // Sin dolly de scroll: la cámara sólo reacciona a la cabeza, como una ventana fija
+        camera.position.x = currentX;
+        camera.position.y = currentY;
+        camera.position.z = currentZ;
+
+        camera.lookAt(0, 0, -5);
+        camera.rotation.x += currentPitch;
+        camera.rotation.y += currentYaw;
+        camera.rotation.z -= currentRoll;
+
+        renderer.render(scene, camera);
+        css3dRenderer.render(css3dScene, camera);
+    }
+
+    // Configuración e Inicialización de MediaPipe FaceMesh
+    const faceMesh = new window.FaceMesh({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}` });
+    faceMesh.setOptions({
+        maxNumFaces: 1, refineLandmarks: false,
+        minDetectionConfidence: 0.6, minTrackingConfidence: 0.6
+    });
+    faceMesh.onResults(onResults);
+
+    let cameraUtils = null;
+    function requestCamera() {
+        cameraUtils = new window.Camera(videoElement, {
+            onFrame: async () => { await faceMesh.send({ image: videoElement }); },
+            width: 640, height: 480
+        });
+        cameraUtils.start().catch(() => {
+            document.getElementById('cam-permission').style.display = 'block';
+        });
+    }
+    window.requestCamera = requestCamera;
+
+    window.onload = () => {
+        init3D();
+        animate();
+        requestCamera();
+        setTimeout(() => {
+            if (!usingFaceTracking) document.getElementById('cam-permission').style.display = 'block';
+        }, 4000);
+    };
+</script>
+</body>
+</html>

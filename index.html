@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Entorno Espacial Completo (6 DOF)</title>
+    <style>
+        body, html {
+            margin: 0; padding: 0; width: 100%; height: 100%;
+            overflow: hidden; background-color: #05050d;
+            font-family: monospace;
+        }
+        #three-canvas { width: 100%; height: 100%; display: block; }
+        #webcam {
+            position: absolute; top: 15px; right: 15px;
+            width: 140px; height: 105px;
+            transform: scaleX(-1); border: 2px solid #00ffcc;
+            border-radius: 6px; z-index: 10; opacity: 0.8;
+        }
+        #hud {
+            position: absolute; top: 15px; left: 15px;
+            color: #00ffcc; background: rgba(5, 5, 15, 0.85);
+            padding: 15px; border-radius: 6px;
+            border: 1px solid #00ffcc; z-index: 10;
+            font-size: 12px; line-height: 1.6;
+            box-shadow: 0 0 15px rgba(0, 255, 220, 0.15);
+        }
+        .seccion { color: #ffffff; font-weight: bold; margin-top: 5px; }
+    </style>
+
+    <!-- Librería de Gráficos 3D -->
+    <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+
+    <!-- Librerías de Inteligencia Artificial (Google MediaPipe) -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+</head>
+<body>
+
+    <div id="hud">
+        <strong>SISTEMA TRACKING 6-DOF</strong><br>
+        <div class="seccion">[POSICIÓN ESPACIAL]</div>
+        X (Lateral): <span id="pos-x">0.00</span><br>
+        Y (Vertical): <span id="pos-y">0.00</span><br>
+        Z (Cercanía): <span id="pos-z">0.00</span><br>
+        <div class="seccion">[ROTACIÓN CEFÁLICA]</div>
+        YAW (Giro): <span id="rot-yaw">0.00</span>°<br>
+        PITCH (Inclinación): <span id="rot-pitch">0.00</span>°<br>
+        ROLL (Alabeo): <span id="rot-roll">0.00</span>°
+    </div>
+    
+    <video id="webcam" autoplay playsinline muted></video>
+    <canvas id="three-canvas"></canvas>
+
+    <script>
+        let scene, camera, renderer, roomGroup;
+        const videoElement = document.getElementById('webcam');
+        const canvas3D = document.getElementById('three-canvas');
+        
+        // Objetivos de la IA (Target)
+        let targetX = 0, targetY = 0, targetZ = 3;
+        let targetYaw = 0, targetPitch = 0, targetRoll = 0;
+        
+        // Valores interpolados actuales (Current)
+        let currentX = 0, currentY = 0, currentZ = 3;
+        let currentYaw = 0, currentPitch = 0, currentRoll = 0;
+        
+        // Coeficiente de suavizado para eliminar ruidos y temblores
+        const SUAVIZADO = 0.10;
+
+        function init3D() {
+            scene = new THREE.Scene();
+            
+            // Campo de visión para acentuar el efecto ventana
+            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 100);
+            camera.position.set(0, 0, 3);
+
+            renderer = new THREE.WebGLRenderer({ canvas: canvas3D, antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+
+            // Creamos un grupo contenedor de la simulación
+            roomGroup = new THREE.Group();
+            scene.add(roomGroup);
+
+            // Habitación tridimensional interior
+            const roomGeo = new THREE.BoxGeometry(10, 7, 10);
+            const roomMats = [
+                new THREE.MeshBasicMaterial({ color: 0x0a0c16, side: THREE.BackSide }), // Derecha
+                new THREE.MeshBasicMaterial({ color: 0x0a0c16, side: THREE.BackSide }), // Izquierda
+                new THREE.MeshBasicMaterial({ color: 0x141829, side: THREE.BackSide }), // Techo
+                new THREE.MeshBasicMaterial({ color: 0x04050a, side: THREE.BackSide }), // Suelo
+                new THREE.MeshBasicMaterial({ color: 0x0f1220, side: THREE.BackSide }), // Fondo
+                new THREE.MeshBasicMaterial({ color: 0x000000, side: THREE.BackSide })  // Atrás
+            ];
+            const room = new THREE.Mesh(roomGeo, roomMats);
+            roomGroup.add(room);
+
+            // Estructura de rejilla espacial (Líneas guía)
+            const edges = new THREE.EdgesGeometry(roomGeo);
+            const lineMat = new THREE.LineBasicMaterial({ color: 0x00ffcc, transparent: true, opacity: 0.2 });
+            const lines = new THREE.LineSegments(edges, lineMat);
+            roomGroup.add(lines);
+
+            // Agregar los paneles virtuales a las paredes de la interfaz
+            agregarPanel(4.8, 0, -1, 0xff0055, "MENÚ B", Math.PI / 2);      // Pared Derecha
+            agregarPanel(-4.8, 0, -1, 0x00bcff, "MENÚ A", -Math.PI / 2);    // Pared Izquierda
+            agregarPanel(0, 0, -4.8, 0x00ffcc, "ESCRITORIO", 0);             // Pared Fondo
+
+            window.addEventListener('resize', onWindowResize, false);
+        }
+
+        function agregarPanel(x, y, z, colorHex, texto, rotY) {
+            // Marco del Panel
+            const geo = new THREE.PlaneGeometry(3.5, 4.5);
+            const mat = new THREE.MeshBasicMaterial({ color: colorHex, wireframe: true, side: THREE.DoubleSide });
+            const mesh = new THREE.Mesh(geo, mat);
+            mesh.position.set(x, y, z);
+            mesh.rotation.y = rotY;
+            roomGroup.add(mesh);
+
+            // Botón interactivo simulado flotando frente al panel
+            const btnGeo = new THREE.BoxGeometry(0.8, 0.5, 0.2);
+            const btnMat = new THREE.MeshBasicMaterial({ color: colorHex });
+            const btn = new THREE.Mesh(btnGeo, btnMat);
+            // Empujamos el botón levemente hacia adentro del cuarto para que tenga relieve
+            btn.position.set(x === 0 ? 0 : x * 0.95, y - 1, z === -4.8 ? z * 0.95 : z);
+            btn.rotation.y = rotY;
+            roomGroup.add(btn);
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // CÁLCULO TRIGONOMÉTRICO CON MEDIAPIPE FACE MESH
+        function onResults(results) {
+            if (!results.multiFaceLandmarks || results.multiFaceLandmarks.length === 0) return;
+
+            const landmarks = results.multiFaceLandmarks[0];
+
+            // Puntos de referencia faciales normalizados de Google
+            const nariz = landmarks[4];
+            const menton = landmarks[152];
+            const frente = landmarks[10];
+            const ojoIzq = landmarks[33];
+            const ojoDer = landmarks[263];
+
+            // --- 1. CÁLCULO DE POSICIÓN (Ventana Holográfica) ---
+            // Invertimos el eje X para que al moverte a la izquierda la perspectiva sea correcta
+            targetX = -((nariz.x - 0.5) * 4.5); 
+            targetY = -((nariz.y - 0.5) * 3.5);
+            
+            // Calculamos distancia aproximada basándonos en la apertura entre los ojos
+            const anchoOjos = Math.hypot(ojoDer.x - ojoIzq.x, ojoDer.y - ojoIzq.y);
+            // Mapeamos el tamaño a una profundidad Z lógica (entre 1.5 y 4.5)
+            targetZ = 1.5 + (1.0 / (anchoOjos * 3.5));
+
+            // --- 2. CÁLCULO DE ROTACIÓN (Orientación de la Mirada) ---
+            // Yaw: Distancia simétrica de la nariz hacia los dos ojos
+            const distIzq = Math.hypot(nariz.x - ojoIzq.x, nariz.y - ojoIzq.y);
+            const distDer = Math.hypot(nariz.x - ojoDer.x, nariz.y - ojoDer.y);
+            targetYaw = (distIzq - distDer) * 2.8;
+
+            // Pitch: Balance vertical entre frente y mentón respecto a la nariz
+            const distFrente = Math.hypot(nariz.x - frente.x, nariz.y - frente.y);
+            const distMenton = Math.hypot(nariz.x - menton.x, nariz.y - menton.y);
+            targetPitch = (distMenton - distFrente) * 2.5;
+
+            // Roll: Ángulo de inclinación lateral de los ojos
+            targetRoll = Math.atan2(ojoDer.y - ojoIzq.y, ojoDer.x - ojoIzq.x);
+
+            // Mostrar métricas en tiempo real dentro del HUD
+            document.getElementById('pos-x').innerText = targetX.toFixed(2);
+            document.getElementById('pos-y').innerText = targetY.toFixed(2);
+            document.getElementById('pos-z').innerText = targetZ.toFixed(2);
+            document.getElementById('rot-yaw').innerText = (targetYaw * (180/Math.PI)).toFixed(1);
+            document.getElementById('rot-pitch').innerText = (targetPitch * (180/Math.PI)).toFixed(1);
+            document.getElementById('rot-roll').innerText = (targetRoll * (180/Math.PI)).toFixed(1);
+        }
+
+        // BUCLE DE RENDERIZADO ASÍNCRONO AUTOMÁTICO
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // Suavizado Lerp simultáneo de las 6 variables libres
+            currentX += (targetX - currentX) * SUAVIZADO;
+            currentY += (targetY - currentY) * SUAVIZADO;
+            currentZ += (targetZ - currentZ) * SUAVIZADO;
+            
+            currentYaw += (targetYaw - currentYaw) * SUAVIZADO;
+            currentPitch += (targetPitch - currentPitch) * SUAVIZADO;
+            currentRoll += (targetRoll - currentRoll) * SUAVIZADO;
+
+            // CONTROL COMBINADO:
+            // 1. Movemos físicamente la cámara por la habitación (Posición)
+            camera.position.x = currentX;
+            camera.position.y = currentY;
+            camera.position.z = currentZ;
+
+            // 2. Apuntamos por defecto al centro del escritorio del fondo
+            camera.lookAt(0, 0, -5);
+
+            // 3. Le sumamos la rotación de tu propio cuello para permitirte "mirar libremente"
+            camera.rotation.x += currentPitch;
+            camera.rotation.y += currentYaw;
+camera.rotation.z -= currentRoll; // Roll invertido para simular horizonte estable
+renderer.render(scene, camera);
+}
+
+// Configuración e Inicialización de MediaPipe FaceMesh
+const faceMesh = new FaceMesh({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`});
+faceMesh.setOptions({
+    maxNumFaces: 1,
+    refineLandmarks: false,
+    minDetectionConfidence: 0.6,
+    minTrackingConfidence: 0.6
+});
+faceMesh.onResults(onResults);
+
+// Activación del stream de video de la webcam
+const cameraUtils = new Camera(videoElement, {
+    onFrame: async () => {
+        await faceMesh.send({ image: videoElement });
+    },
+    width: 640,
+    height: 480
+});
+
+window.onload = () => {
+    init3D();
+    cameraUtils.start();
+    animate();
+};
+</script>
+</body>
+</html>

@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Monitor Extendido - Habitación Virtual 3D</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #050505;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        #three-canvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+        #jeeFaceFilterCanvas {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            width: 110px;
+            height: 82px;
+            transform: scaleX(-1);
+            border: 2px solid #00ffcc;
+            border-radius: 6px;
+            z-index: 10;
+            box-shadow: 0 0 10px rgba(0, 255, 204, 0.3);
+        }
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #00ffcc;
+            font-size: 20px;
+            letter-spacing: 2px;
+            z-index: 20;
+        }
+    </style>
+
+    <!-- Librerías desde CDNs -->
+    <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+    <script src="https://appstatic.jeeliz.com/faceFilter/jeelizFaceFilter.js"></script>
+</head>
+<body>
+
+    <div id="loading">INICIALIZANDO ENTORNO ESPACIAL...</div>
+    <canvas id="jeeFaceFilterCanvas"></canvas>
+    <canvas id="three-canvas"></canvas>
+
+    <script>
+        let scene, camera, renderer;
+        let targetX = 0, targetY = 0, targetZ = 0;
+        let currentX = 0, currentY = 0, currentZ = 0;
+        
+        // El factor de suavizado (Lerp). Menor valor = más suave pero más lento.
+        const SUAVIZADO = 0.08; 
+
+        const canvas3D = document.getElementById('three-canvas');
+        const loadingDiv = document.getElementById('loading');
+
+        function init3D() {
+            scene = new THREE.Scene();
+            
+            // Campo de visión amplio para aumentar el efecto de perspectiva en los bordes
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 100);
+            // La cámara empieza en el centro de la habitación
+            camera.position.set(0, 0, 0); 
+
+            renderer = new THREE.WebGLRenderer({ canvas: canvas3D, antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+
+            // 1. CREAR LA HABITACIÓN VIRTUAL (Invertimos las caras del cubo)
+            const roomSize = 10;
+            const roomGeometry = new THREE.BoxGeometry(roomSize, roomSize, roomSize);
+            
+            // Colores futuristas para identificar cada pared de la habitación
+            const roomMaterials = [
+                new THREE.MeshBasicMaterial({ color: 0x111525, side: THREE.BackSide }), // Pared Derecha (Menú Izquierdo al asomarse)
+                new THREE.MeshBasicMaterial({ color: 0x111525, side: THREE.BackSide }), // Pared Izquierda (Menú Derecho al asomarse)
+                new THREE.MeshBasicMaterial({ color: 0x1a1a2e, side: THREE.BackSide }), // Techo
+                new THREE.MeshBasicMaterial({ color: 0x0d0d1a, side: THREE.BackSide }), // Suelo
+                new THREE.MeshBasicMaterial({ color: 0x151a30, side: THREE.BackSide }), // Fondo (Frente)
+                new THREE.MeshBasicMaterial({ color: 0x000000, side: THREE.BackSide })  // Atrás (Detrás del usuario)
+            ];
+            
+            const room = new THREE.Mesh(roomGeometry, roomMaterials);
+            scene.add(room);
+
+            // Lineas de guía (Wireframe) para dar sensación de profundidad estructural
+            const wireframeGeo = new THREE.EdgesGeometry(roomGeometry);
+            const wireframeMat = new THREE.LineBasicMaterial({ color: 0x00ffcc, linewidth: 1, transparent: true, opacity: 0.3 });
+            const roomLines = new THREE.LineSegments(wireframeGeo, wireframeMat);
+            scene.add(roomLines);
+
+            // 2. AGREGAR PANELES DE MENÚ FLOTANTES EN LAS PAREDES OCULTAS
+            // Menú en la pared Izquierda
+            crearPanelMenu(-4.8, 0, -2, 0x00ffcc, "MENÚ CONFIGURACIÓN", Math.PI / 2);
+            // Menú en la pared Derecha
+            crearPanelMenu(4.8, 0, -2, 0xff007f, "HERRAMIENTAS / APPS", -Math.PI / 2);
+            // Contenido en la pared de Fondo (Principal)
+            crearPanelMenu(0, 0, -4.8, 0x00bcff, "ESCRITORIO PRINCIPAL", 0);
+
+            window.addEventListener('resize', onWindowResize, false);
+        }
+
+        // Función auxiliar para dibujar "pantallas" o menús flotantes en los muros
+        function crearPanelMenu(x, y, z, colorHex, texto, rotacionY) {
+            const geometry = new THREE.PlaneGeometry(3, 4);
+            const material = new THREE.MeshBasicMaterial({ 
+                color: colorHex, 
+                wireframe: true, 
+                side: THREE.DoubleSide 
+            });
+            const panel = new THREE.Mesh(geometry, material);
+            panel.position.set(x, y, z);
+            panel.rotation.y = rotacionY;
+            scene.add(panel);
+
+            // Un pequeño cubo flotante simulando un botón interactivo dentro del menú
+            const botonGeo = new THREE.BoxGeometry(0.6, 0.6, 0.2);
+            const botonMat = new THREE.MeshBasicMaterial({ color: colorHex });
+            const boton = new THREE.Mesh(botonGeo, botonMat);
+            boton.position.set(x, y - 1, z);
+            boton.rotation.y = rotacionY;
+            scene.add(boton);
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function initFaceFilter() {
+            JEELIZFACEFILTER.init({
+                canvasId: 'jeeFaceFilterCanvas',
+                NNCPath: 'https://appstatic.jeeliz.com/faceFilter/',
+                callbackReady: function(errCode) {
+                    if (errCode) {
+                        loadingDiv.innerText = "Error de cámara.";
+                        return;
+                    }
+                    loadingDiv.style.display = 'none';
+                    animate(); // Iniciamos el bucle de renderizado optimizado
+                },
+                callbackTrack: function(detectState) {
+                    if (detectState.detected > 0.6) {
+                        // Capturamos la posición del usuario
+                        // Multiplicamos para definir qué tanto "permite" la ventana movernos dentro del cuarto
+                        targetX = detectState.x * 2.5; 
+                        targetY = detectState.y * 2.0;
+                        // Escalamos la profundidad Z según la cercanía de la cara
+                        targetZ = (1 - detectState.s) * 2.5;
+                    }
+                }
+            });
+        }
+
+        // Bucle de animación independiente (usa RequestAnimationFrame para máxima fluidez)
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // APLICAR LERP (Suavizado matemático de movimiento)
+            // La posición actual se acerca un porcentaje (SUAVIZADO) hacia el objetivo en cada frame
+            currentX += (targetX - currentX) * SUAVIZADO;
+            currentY += (targetY - currentY) * SUAVIZADO;
+            currentZ += (targetZ - currentZ) * SUAVIZADO;
+
+            // EFECTO VENTANA INVERSO: 
+            // Si mueves tu cabeza a la IZQUIERDA (X negativo), tu ojo físico ve el lado DERECHO del cuarto.
+            // Para simular esto en la pantalla, la cámara virtual debe moverse a la DERECHA (X positivo).
+            camera.position.x = -currentX;
+            camera.position.y = -currentY;
+            camera.position.z = currentZ;
+
+            // Mantener la cámara apuntando siempre al centro de la pared de fondo.
+            // Esto causa que las paredes laterales "aparezcan" dinámicamente al mover la cabeza.
+            camera.lookAt(0, 0, -5);
+
+            renderer.render(scene, camera);
+        }
+
+        window.onload = () => {
+            init3D();
+            initFaceFilter();
+        };
+    </script>
+</body>
+</html>

@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Screen3D — Tu pantalla, una ventana al espacio</title>
+<style>
+    :root {
+        --neon-cyan: #00ffe5;
+        --neon-pink: #ff2fd6;
+        --neon-purple: #8b5cf6;
+        --neon-blue: #2fa8ff;
+        --bg: #05040a;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+        margin: 0; padding: 0; width: 100%; height: 100%;
+        overflow: hidden; background: var(--bg); color: #eef2ff;
+        font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    }
+
+    /* WebGL background world (starfield / neon tunnel / grid) */
+    #three-canvas { position: fixed; inset: 0; display: block; z-index: 0; }
+
+    /* CSS3D layer: the real page content, positioned as objects inside the 3D world */
+    #css3d-container { position: fixed; inset: 0; z-index: 1; pointer-events: none; overflow: hidden; }
+    #css3d-container .css3d-object * { pointer-events: auto; }
+
+    /* Fixed chrome UI (outside the 3D world) */
+    #hud {
+        position: fixed; top: 15px; left: 15px; z-index: 10;
+        color: var(--neon-cyan); background: rgba(5, 5, 15, 0.8);
+        padding: 10px 14px; border-radius: 8px; border: 1px solid var(--neon-cyan);
+        font-size: 11px; line-height: 1.5; box-shadow: 0 0 15px rgba(0, 255, 220, 0.2);
+        max-width: 220px;
+    }
+    #webcam {
+        position: fixed; top: 15px; right: 15px; z-index: 10;
+        width: 130px; height: 98px; transform: scaleX(-1);
+        border: 2px solid var(--neon-cyan); border-radius: 6px; opacity: 0.85;
+    }
+    nav {
+        position: fixed; top: 0; left: 0; right: 0; z-index: 10;
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 18px 40px; pointer-events: none;
+    }
+    nav .brand {
+        font-weight: 800; letter-spacing: 2px; font-size: 18px; color: #fff;
+        text-shadow: 0 0 10px var(--neon-cyan), 0 0 20px var(--neon-cyan);
+    }
+    nav .links { display: flex; gap: 10px; pointer-events: auto; }
+    nav button, .demo-cta {
+        pointer-events: auto; cursor: pointer; font-family: inherit;
+        text-decoration: none; color: #05040a; background: var(--neon-cyan);
+        border: none; padding: 9px 18px; border-radius: 30px; font-weight: 700;
+        font-size: 12px; box-shadow: 0 0 12px rgba(0,255,229,0.5); transition: transform 0.2s;
+    }
+    nav button.ghost {
+        background: transparent; color: var(--neon-cyan); border: 1px solid var(--neon-cyan);
+        box-shadow: 0 0 10px rgba(0,255,229,0.25);
+    }
+    nav button:hover, .demo-cta:hover { transform: translateY(-2px); }
+
+    #scroll-hint {
+        position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
+        z-index: 10; color: var(--neon-cyan); font-size: 12px; letter-spacing: 1px;
+        opacity: 0.75; text-shadow: 0 0 8px var(--neon-cyan); pointer-events: none;
+        animation: bob 2s ease-in-out infinite;
+    }
+    @keyframes bob { 0%,100% { transform: translate(-50%, 0); } 50% { transform: translate(-50%, 6px); } }
+
+    #cam-permission {
+        position: fixed; bottom: 18px; right: 18px; z-index: 10;
+        background: rgba(5,5,15,0.85); border: 1px solid var(--neon-pink); color: var(--neon-pink);
+        padding: 10px 14px; border-radius: 8px; font-size: 12px; cursor: pointer;
+        box-shadow: 0 0 12px rgba(255,47,214,0.3); display: none;
+    }
+
+    /* ---- Content panel styling (rendered inside 3D space via CSS3DObject) ---- */
+    .panel { width: 1000px; text-align: center; }
+    .badge {
+        display: inline-block; padding: 8px 22px; border-radius: 24px;
+        border: 1px solid var(--neon-cyan); color: var(--neon-cyan);
+        font-size: 15px; letter-spacing: 3px; text-transform: uppercase;
+        margin-bottom: 26px; box-shadow: 0 0 16px rgba(0,255,229,0.35);
+        background: rgba(5,4,10,0.4);
+    }
+    .glow-title {
+        font-size: 88px; font-weight: 900; margin: 0 0 20px; line-height: 1.05;
+        background: linear-gradient(90deg, var(--neon-cyan), var(--neon-pink) 50%, var(--neon-purple));
+        -webkit-background-clip: text; background-clip: text; color: transparent;
+        text-shadow: 0 0 60px rgba(0, 255, 229, 0.4); letter-spacing: 1px;
+    }
+    .subtitle { font-size: 26px; color: #c9d3f5; line-height: 1.6; margin: 0 0 40px; }
+    .btn-row { display: flex; gap: 24px; justify-content: center; }
+    .btn {
+        text-decoration: none; padding: 20px 42px; border-radius: 10px; font-weight: 700;
+        font-size: 22px; letter-spacing: 0.5px; transition: transform 0.2s, box-shadow 0.2s;
+        display: inline-block;
+    }
+    .btn-primary { color: #05040a; background: linear-gradient(90deg, var(--neon-cyan), var(--neon-blue)); box-shadow: 0 0 30px rgba(0,255,229,0.55); }
+    .btn-secondary { color: var(--neon-pink); border: 1px solid var(--neon-pink); background: rgba(255,47,214,0.06); box-shadow: 0 0 22px rgba(255,47,214,0.3); }
+    .btn:hover { transform: translateY(-4px); }
+
+    .section-title { font-size: 56px; font-weight: 800; margin: 0 0 18px; color: #fff; text-shadow: 0 0 26px rgba(255,47,214,0.45); }
+    .section-sub { font-size: 22px; color: #b7c0e6; margin: 0 0 50px; line-height: 1.6; }
+
+    .cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 30px; }
+    .card {
+        background: rgba(15,14,28,0.65); border: 1px solid rgba(0,255,229,0.3); border-radius: 18px;
+        padding: 34px 30px; text-align: left; box-shadow: 0 0 24px rgba(0,255,229,0.12);
+    }
+    .card .icon { font-size: 40px; margin-bottom: 16px; filter: drop-shadow(0 0 10px currentColor); }
+    .card h3 { margin: 0 0 12px; font-size: 24px; color: #fff; }
+    .card p { margin: 0; color: #a9b2d6; font-size: 17px; line-height: 1.55; }
+
+    .steps { display: flex; flex-direction: column; gap: 26px; }
+    .step {
+        display: flex; align-items: center; gap: 26px; text-align: left;
+        background: rgba(15,14,28,0.6); border: 1px solid rgba(139,92,246,0.35);
+        border-radius: 16px; padding: 26px 32px; box-shadow: 0 0 22px rgba(139,92,246,0.15);
+    }
+    .step .num {
+        flex: 0 0 auto; width: 56px; height: 56px; border-radius: 50%;
+        display: flex; align-items: center; justify-content: center; font-weight: 800;
+        font-size: 24px; color: var(--bg); background: var(--neon-purple); box-shadow: 0 0 20px var(--neon-purple);
+    }
+    .step h4 { margin: 0 0 6px; color: #fff; font-size: 22px; }
+    .step p { margin: 0; color: #a9b2d6; font-size: 16px; }
+
+    footer.panel { color: #6b7399; font-size: 15px; }
+    footer.panel a { color: var(--neon-cyan); }
+</style>
+
+<script type="importmap">
+{ "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+</head>
+<body>
+
+    <nav>
+        <div class="brand">⌬ SCREEN3D</div>
+        <div class="links">
+            <button class="ghost" onclick="goTo('features')">Features</button>
+            <button class="ghost" onclick="goTo('steps')">Cómo funciona</button>
+            <a class="demo-cta" href="index.html">Lanzar demo</a>
+        </div>
+    </nav>
+
+    <div id="hud">
+        <strong>VENTANA 3D</strong><br>
+        Mueve la cabeza para explorar la profundidad. Sin cámara, usa el ratón.
+    </div>
+    <video id="webcam" autoplay playsinline muted></video>
+    <div id="scroll-hint">▼ Desliza para navegar por el espacio ▼</div>
+    <div id="cam-permission" onclick="requestCamera()">⚠ Activar cámara para el efecto de profundidad facial</div>
+
+    <canvas id="three-canvas"></canvas>
+    <div id="css3d-container"></div>
+
+    <!-- Templates for the content panels placed inside the 3D world -->
+    <template id="tpl-hero">
+        <div class="panel">
+            <div class="badge">Realidad aumentada · Sin gafas · Sin sensores</div>
+            <h1 class="glow-title">Tu pantalla es<br>una ventana al espacio</h1>
+            <p class="subtitle">Screen3D usa tu webcam y seguimiento facial en tiempo real para convertir<br>
+                cualquier monitor plano en una ventana 3D con paralaje real.</p>
+            <div class="btn-row">
+                <a class="btn btn-primary" href="index.html">▶ Probar la demo 6-DOF</a>
+                <button class="btn btn-secondary" onclick="goTo('steps')">Cómo funciona ↓</button>
+            </div>
+        </div>
+    </template>
+
+    <template id="tpl-features">
+        <div class="panel">
+            <h2 class="section-title">Profundidad real, sin hardware extra</h2>
+            <p class="section-sub">Todo corre en el navegador, usando visión por computadora sobre tu propia webcam.</p>
+            <div class="cards">
+                <div class="card"><div class="icon" style="color: var(--neon-cyan);">👁</div><h3>Face tracking 6-DOF</h3><p>Detecta posición y rotación de tu cabeza (X, Y, Z, yaw, pitch, roll) con Google MediaPipe Face Mesh.</p></div>
+                <div class="card"><div class="icon" style="color: var(--neon-pink);">🪟</div><h3>Efecto ventana</h3><p>La cámara virtual de Three.js se mueve como tus ojos, generando paralaje creíble sobre la escena.</p></div>
+                <div class="card"><div class="icon" style="color: var(--neon-purple);">✨</div><h3>Suavizado inteligente</h3><p>Interpolación (lerp) que elimina temblores y ruido para un movimiento fluido y natural.</p></div>
+                <div class="card"><div class="icon" style="color: var(--neon-blue);">🖥️</div><h3>100% navegador</h3><p>Sin instalar nada: WebGL + WebRTC funcionando directamente en tu navegador.</p></div>
+            </div>
+        </div>
+    </template>
+
+    <template id="tpl-steps">
+        <div class="panel">
+            <h2 class="section-title">Cómo funciona</h2>
+            <p class="section-sub">Tres capas trabajando juntas para simular profundidad real en una pantalla 2D.</p>
+            <div class="steps">
+                <div class="step"><div class="num">1</div><div><h4>Captura facial</h4><p>La webcam envía cada fotograma a MediaPipe Face Mesh, que localiza cientos de puntos de referencia en tu rostro.</p></div></div>
+                <div class="step"><div class="num">2</div><div><h4>Cálculo de posición y ángulo</h4><p>A partir de la nariz, ojos, frente y mentón se estima tu posición (X, Y, Z) y rotación de cabeza en tiempo real.</p></div></div>
+                <div class="step"><div class="num">3</div><div><h4>Render 3D con paralaje</h4><p>Three.js mueve la cámara virtual dentro de esta misma escena, creando la ilusión de profundidad al mover la cabeza.</p></div></div>
+            </div>
+        </div>
+    </template>
+
+    <template id="tpl-cta">
+        <div class="panel">
+            <h2 class="section-title">Listo para ver profundidad donde no la hay</h2>
+            <p class="section-sub">Activa tu cámara y experimenta la ventana holográfica ahora mismo.</p>
+            <div class="btn-row"><a class="btn btn-primary" href="index.html">▶ Lanzar experiencia 3D</a></div>
+        </div>
+    </template>
+
+    <template id="tpl-footer">
+        <footer class="panel">Screen3D — proyecto experimental de WebGL + tracking facial · <a href="index.html">Ir a la demo</a></footer>
+    </template>
+
+<script type="module">
+    import * as THREE from 'three';
+    import { CSS3DRenderer, CSS3DObject } from 'three/addons/renderers/CSS3DRenderer.js';
+
+    const videoElement = document.getElementById('webcam');
+    const canvas3D = document.getElementById('three-canvas');
+
+    // Objetivos de la IA / interacción (Target)
+    let targetX = 0, targetY = 0, targetZ = 3;
+    let targetYaw = 0, targetPitch = 0, targetRoll = 0;
+
+    // Valores interpolados actuales (Current)
+    let currentX = 0, currentY = 0, currentZ = 3;
+    let currentYaw = 0, currentPitch = 0, currentRoll = 0;
+
+    const SUAVIZADO = 0.10;
+
+    // Secciones del mundo 3D: cada una es un plano de contenido a una profundidad distinta
+    const SECTIONS = [
+        { id: 'hero',     tpl: 'tpl-hero',     z: -2  },
+        { id: 'features', tpl: 'tpl-features', z: -22 },
+        { id: 'steps',    tpl: 'tpl-steps',    z: -42 },
+        { id: 'cta',      tpl: 'tpl-cta',      z: -62 },
+        { id: 'footer',   tpl: 'tpl-footer',   z: -68 }
+    ];
+    const CONTENT_SCALE = 0.012;
+    const CAMERA_DOLLY_OFFSET = 5; // distancia base cámara -> panel al llegar a su sección
+
+    let scene, camera, renderer, css3dScene, css3dRenderer;
+    let scrollTarget = 0, currentScroll = 0;
+    const maxScroll = -SECTIONS[SECTIONS.length - 1].z - CAMERA_DOLLY_OFFSET + 4;
+
+    function init3D() {
+        scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x05040a, 0.035);
+
+        camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 300);
+        camera.position.set(0, 0, 3);
+
+        renderer = new THREE.WebGLRenderer({ canvas: canvas3D, antialias: true, alpha: false });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+        css3dScene = new THREE.Scene();
+        css3dRenderer = new CSS3DRenderer();
+        css3dRenderer.setSize(window.innerWidth, window.innerHeight);
+        css3dRenderer.domElement.style.position = 'absolute';
+        css3dRenderer.domElement.style.top = '0';
+        css3dRenderer.domElement.style.pointerEvents = 'none';
+        document.getElementById('css3d-container').appendChild(css3dRenderer.domElement);
+
+        buildNeonTunnel();
+        buildStarfield();
+        buildContentPanels();
+
+        window.addEventListener('resize', onWindowResize, false);
+        window.addEventListener('wheel', onWheel, { passive: true });
+        window.addEventListener('mousemove', onMouseMove);
+        setupTouchScroll();
+    }
+
+    // Anillos neón que dan sensación de túnel/profundidad a lo largo del eje Z
+    function buildNeonTunnel() {
+        const colors = [0x00ffe5, 0xff2fd6, 0x8b5cf6, 0x2fa8ff];
+        for (let i = 0; i < 20; i++) {
+            const z = 5 - i * 4.5;
+            const radius = 9 + Math.sin(i * 0.6) * 1.5;
+            const geo = new THREE.RingGeometry(radius - 0.05, radius, 48);
+            const mat = new THREE.MeshBasicMaterial({
+                color: colors[i % colors.length], side: THREE.DoubleSide,
+                transparent: true, opacity: 0.18, depthWrite: false
+            });
+            const ring = new THREE.Mesh(geo, mat);
+            ring.position.z = z;
+            scene.add(ring);
+        }
+
+        // Suelo de rejilla neón extendido a lo largo del túnel
+        const grid = new THREE.GridHelper(60, 40, 0x00ffe5, 0x00ffe5);
+        grid.material.transparent = true;
+        grid.material.opacity = 0.12;
+        grid.position.set(0, -6, -30);
+        scene.add(grid);
+    }
+
+    function buildStarfield() {
+        const count = 900;
+        const positions = new Float32Array(count * 3);
+        for (let i = 0; i < count; i++) {
+            positions[i * 3] = (Math.random() - 0.5) * 70;
+            positions[i * 3 + 1] = (Math.random() - 0.5) * 40;
+            positions[i * 3 + 2] = Math.random() * -80 + 10;
+        }
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        const mat = new THREE.PointsMaterial({ color: 0xffffff, size: 0.12, transparent: true, opacity: 0.7 });
+        scene.add(new THREE.Points(geo, mat));
+    }
+
+    // Coloca cada sección de contenido HTML como un objeto real dentro del mundo 3D
+    function buildContentPanels() {
+        SECTIONS.forEach(section => {
+            const tpl = document.getElementById(section.tpl);
+            const el = tpl.content.firstElementChild.cloneNode(true);
+            el.classList.add('css3d-object');
+            const obj = new CSS3DObject(el);
+            obj.position.set(0, 0, section.z);
+            obj.scale.set(CONTENT_SCALE, CONTENT_SCALE, CONTENT_SCALE);
+            css3dScene.add(obj);
+        });
+    }
+
+    function onWindowResize() {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        css3dRenderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    function onWheel(e) {
+        scrollTarget = Math.max(0, Math.min(maxScroll, scrollTarget + e.deltaY * 0.02));
+    }
+
+    let touchStartY = null;
+    function setupTouchScroll() {
+        window.addEventListener('touchstart', (e) => { touchStartY = e.touches[0].clientY; }, { passive: true });
+        window.addEventListener('touchmove', (e) => {
+            if (touchStartY === null) return;
+            const dy = touchStartY - e.touches[0].clientY;
+            scrollTarget = Math.max(0, Math.min(maxScroll, scrollTarget + dy * 0.05));
+            touchStartY = e.touches[0].clientY;
+        }, { passive: true });
+    }
+
+    // Fallback sin webcam: el ratón simula el movimiento de cabeza
+    let usingFaceTracking = false;
+    function onMouseMove(e) {
+        if (usingFaceTracking) return;
+        targetX = -((e.clientX / window.innerWidth) - 0.5) * 3.5;
+        targetY = -((e.clientY / window.innerHeight) - 0.5) * 2.5;
+        targetYaw = -((e.clientX / window.innerWidth) - 0.5) * 0.25;
+        targetPitch = ((e.clientY / window.innerHeight) - 0.5) * 0.2;
+    }
+
+    function goTo(id) {
+        const section = SECTIONS.find(s => s.id === id);
+        if (section) scrollTarget = Math.max(0, Math.min(maxScroll, -section.z - CAMERA_DOLLY_OFFSET + 3));
+    }
+    window.goTo = goTo;
+
+    // CÁLCULO TRIGONOMÉTRICO CON MEDIAPIPE FACE MESH (idéntico al de la demo)
+    function onResults(results) {
+        if (!results.multiFaceLandmarks || results.multiFaceLandmarks.length === 0) return;
+        usingFaceTracking = true;
+        document.getElementById('cam-permission').style.display = 'none';
+
+        const landmarks = results.multiFaceLandmarks[0];
+        const nariz = landmarks[4];
+        const menton = landmarks[152];
+        const frente = landmarks[10];
+        const ojoIzq = landmarks[33];
+        const ojoDer = landmarks[263];
+
+        targetX = -((nariz.x - 0.5) * 4.5);
+        targetY = -((nariz.y - 0.5) * 3.5);
+
+        const anchoOjos = Math.hypot(ojoDer.x - ojoIzq.x, ojoDer.y - ojoIzq.y);
+        targetZ = 1.5 + (1.0 / (anchoOjos * 3.5));
+
+        const distIzq = Math.hypot(nariz.x - ojoIzq.x, nariz.y - ojoIzq.y);
+        const distDer = Math.hypot(nariz.x - ojoDer.x, nariz.y - ojoDer.y);
+        targetYaw = (distIzq - distDer) * 2.8;
+
+        const distFrente = Math.hypot(nariz.x - frente.x, nariz.y - frente.y);
+        const distMenton = Math.hypot(nariz.x - menton.x, nariz.y - menton.y);
+        targetPitch = (distMenton - distFrente) * 2.5;
+
+        targetRoll = Math.atan2(ojoDer.y - ojoIzq.y, ojoDer.x - ojoIzq.x);
+    }
+
+    function animate() {
+        requestAnimationFrame(animate);
+
+        currentX += (targetX - currentX) * SUAVIZADO;
+        currentY += (targetY - currentY) * SUAVIZADO;
+        currentZ += (targetZ - currentZ) * SUAVIZADO;
+        currentYaw += (targetYaw - currentYaw) * SUAVIZADO;
+        currentPitch += (targetPitch - currentPitch) * SUAVIZADO;
+        currentRoll += (targetRoll - currentRoll) * SUAVIZADO;
+        currentScroll += (scrollTarget - currentScroll) * SUAVIZADO;
+
+        // La cámara viaja por el túnel (scroll) y además reacciona a la posición de la cabeza (paralaje)
+        const dollyZ = 3 - currentScroll;
+        camera.position.x = currentX;
+        camera.position.y = currentY;
+        camera.position.z = dollyZ + (currentZ - 3);
+
+        camera.lookAt(camera.position.x, camera.position.y, camera.position.z - 5);
+        camera.rotation.x += currentPitch;
+        camera.rotation.y += currentYaw;
+        camera.rotation.z -= currentRoll;
+
+        renderer.render(scene, camera);
+        css3dRenderer.render(css3dScene, camera);
+    }
+
+    // Configuración e Inicialización de MediaPipe FaceMesh
+    const faceMesh = new window.FaceMesh({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}` });
+    faceMesh.setOptions({
+        maxNumFaces: 1, refineLandmarks: false,
+        minDetectionConfidence: 0.6, minTrackingConfidence: 0.6
+    });
+    faceMesh.onResults(onResults);
+
+    let cameraUtils = null;
+    function requestCamera() {
+        cameraUtils = new window.Camera(videoElement, {
+            onFrame: async () => { await faceMesh.send({ image: videoElement }); },
+            width: 640, height: 480
+        });
+        cameraUtils.start().catch(() => {
+            document.getElementById('cam-permission').style.display = 'block';
+        });
+    }
+    window.requestCamera = requestCamera;
+
+    window.onload = () => {
+        init3D();
+        animate();
+        requestCamera();
+        setTimeout(() => {
+            if (!usingFaceTracking) document.getElementById('cam-permission').style.display = 'block';
+        }, 4000);
+    };
+</script>
+</body>
+</html>
